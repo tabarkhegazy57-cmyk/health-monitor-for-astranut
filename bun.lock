@@ -46,6 +46,8 @@
         "embla-carousel-react": "^8.6.0",
         "input-otp": "^1.4.2",
         "lucide-react": "^0.575.0",
+        "open-anatomy-3d": "0.1.0",
+        "open-anatomy-3d-react": "0.1.1",
         "react": "^19.2.0",
         "react-day-picker": "^9.14.0",
         "react-dom": "^19.2.0",
@@ -1014,6 +1016,10 @@
     "ofetch": ["ofetch@2.0.0-alpha.3", "", {}, "sha512-zpYTCs2byOuft65vI3z43Dd6iSdFbOZZLb9/d21aCpx2rGastVU9dOCv0lu4ykc1Ur1anAYjDi3SUvR0vq50JA=="],
 
     "ohash": ["ohash@2.0.11", "", {}, "sha512-RdR9FQrFwNBNXAr4GixM8YaRZRJ5PUWbKYbE5eOsrwAjJW0q2REGcf79oYPsLyskQCZG1PLN+S/K1V00joZAoQ=="],
+
+    "open-anatomy-3d": ["open-anatomy-3d@0.1.0", "", {}, "sha512-2+fcvSpnxADq4q1iTeDjoK5EMN1Id7m+PalvCBVkt8qod6+OVLZKuqxBZr0T+wHQCmTlmMBcLma5CXLzdattAA=="],
+
+    "open-anatomy-3d-react": ["open-anatomy-3d-react@0.1.1", "", { "dependencies": { "open-anatomy-3d": "^0.1.0" }, "peerDependencies": { "@react-three/drei": "^9.88.0", "@react-three/fiber": "^8.15.0", "react": "^18.0.0", "react-dom": "^18.0.0", "three": ">=0.155.0" } }, "sha512-fe1SmEMo+kT74LZXkc4im6fUHc95RgDc4sHSqsYfv98gzPDnVoa/jvRDGdjKqwXforlGUUcYg7ha19y35n+H4w=="],
 
     "optionator": ["optionator@0.9.4", "", { "dependencies": { "deep-is": "^0.1.3", "fast-levenshtein": "^2.0.6", "levn": "^0.4.1", "prelude-ls": "^1.2.1", "type-check": "^0.4.0", "word-wrap": "^1.2.5" } }, "sha512-6IpQ7mKUxRcZNLIObR0hz7lxsapSSIYNZJwXPGeF0mTVqGKFIXj1DQcMoT22S3ROcLyY/rz0PWaWZ9ayWmad9g=="],
 

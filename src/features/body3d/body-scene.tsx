@@ -1,102 +1,234 @@
-import { CameraControls, ContactShadows, Environment, Lightformer } from "@react-three/drei";
-import { Canvas, useFrame } from "@react-three/fiber";
-import { useEffect, useRef, useState } from "react";
+import "open-anatomy-3d-react/styles.css";
+import "./anatomy-theme.css";
 
+import { useGLTF, useProgress } from "@react-three/drei";
+import { _roots } from "@react-three/fiber";
+import { AlertTriangle } from "lucide-react";
+import { modelUrl } from "open-anatomy-3d";
+import { AnatomyViewer } from "open-anatomy-3d-react";
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import * as THREE from "three";
+
+import { Button } from "@/components/ui/button";
 import type { BodyRegionId } from "@/types/domain";
 
-import { ActiveBodyModel } from "./active-model";
+import { regionForStructure, structuresInRegion } from "./anatomy-regions";
 import { DEFAULT_VIEW, REGION_VIEWS } from "./camera-presets";
-import type { BodyViewerApi } from "./types";
+import type { BodyViewerApi, CameraFocus } from "./types";
 
-function Rig({
-  autoRotate,
-  onApi,
-  onFirstFrame,
-}: {
+const MODEL_SEX = "male" as const;
+const MODEL_URL = modelUrl(MODEL_SEX);
+
+/** Viewer colours, matched to the app palette (teal primary, mint hover). */
+const HOVER_COLOR = "#5cc7b0";
+const HIGHLIGHT_COLOR = "#1f9e93";
+
+const MIN_DISTANCE = 0.6;
+const MAX_DISTANCE = 6;
+const ZOOM_STEP = 1.25;
+const TWEEN_MS = 650;
+const CLICK_SLOP_PX = 4;
+
+/** The subset of drei's OrbitControls this wrapper drives. */
+interface Controls extends THREE.EventDispatcher<{ start: object }> {
+  target: THREE.Vector3;
+  object: THREE.Camera;
+  autoRotate: boolean;
+  autoRotateSpeed: number;
+  enableZoom: boolean;
+  update(): boolean;
+}
+
+interface Props {
+  selected: BodyRegionId | null;
+  selectedStructure: string | null;
+  onSelect: (region: BodyRegionId | null, structure: string | null) => void;
   autoRotate: boolean;
   onApi: (api: BodyViewerApi) => void;
-  onFirstFrame: () => void;
-}) {
-  const controls = useRef<CameraControls>(null);
-  const drawn = useRef(false);
+}
 
-  useEffect(() => {
-    const c = controls.current;
-    if (!c) return;
-    c.setLookAt(...DEFAULT_VIEW.position, ...DEFAULT_VIEW.target, false);
-    onApi({
-      zoomIn: () => void c.dolly(0.45, true),
-      zoomOut: () => void c.dolly(-0.45, true),
-      rotate: (d) => void c.rotate(d * (Math.PI / 4), 0, true),
-      reset: () => void c.setLookAt(...DEFAULT_VIEW.position, ...DEFAULT_VIEW.target, true),
-      focus: (id) => {
-        const v = id ? REGION_VIEWS[id] : DEFAULT_VIEW;
-        void c.setLookAt(...v.position, ...v.target, true);
-      },
-    });
-  }, [onApi]);
-
-  useFrame((_, delta) => {
-    if (!drawn.current) {
-      drawn.current = true;
-      onFirstFrame();
-    }
-    if (autoRotate && controls.current) {
-      controls.current.azimuthAngle += Math.min(delta, 0.05) * 0.35;
-    }
-  });
-
+export default function BodyScene(props: Props) {
+  const [attempt, setAttempt] = useState(0);
   return (
-    <CameraControls
-      ref={controls}
-      minDistance={1}
-      maxDistance={5}
-      smoothTime={0.35}
-      minPolarAngle={0.25}
-      maxPolarAngle={Math.PI - 0.35}
-    />
+    <ModelErrorBoundary
+      key={attempt}
+      onRetry={() => {
+        useGLTF.clear(MODEL_URL);
+        setAttempt((a) => a + 1);
+      }}
+    >
+      <AnatomyStage {...props} />
+    </ModelErrorBoundary>
   );
 }
 
-export default function BodyScene({
-  selected,
-  onSelect,
-  autoRotate,
-  onApi,
-}: {
-  selected: BodyRegionId | null;
-  onSelect: (id: BodyRegionId | null) => void;
-  autoRotate: boolean;
-  onApi: (api: BodyViewerApi) => void;
-}) {
-  const [hovered, setHovered] = useState<BodyRegionId | null>(null);
-  const [ready, setReady] = useState(false);
+function AnatomyStage({ selected, selectedStructure, onSelect, autoRotate, onApi }: Props) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [controls, setControls] = useState<Controls | null>(null);
+  const tween = useRef<number | null>(null);
+  const pointerDown = useRef<{ x: number; y: number } | null>(null);
+  const structureClicked = useRef(false);
+  const { active, progress } = useProgress();
+
+  // AnatomyViewer owns its Canvas; reach its OrbitControls through the R3F root.
+  useEffect(() => {
+    let raf = 0;
+    const find = () => {
+      const canvas = wrapRef.current?.querySelector("canvas");
+      const found = canvas ? (_roots.get(canvas)?.store.getState().controls as Controls | null | undefined) : null;
+      if (found) setControls(found);
+      else raf = requestAnimationFrame(find);
+    };
+    find();
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  useEffect(() => {
+    if (!controls) return;
+    const c = controls;
+    // The package zooms only on Ctrl+wheel; keep the explorer's scroll / pinch zoom.
+    c.enableZoom = true;
+
+    const cancel = () => {
+      if (tween.current !== null) cancelAnimationFrame(tween.current);
+      tween.current = null;
+    };
+    const current = () => new THREE.Spherical().setFromVector3(c.object.position.clone().sub(c.target));
+    const animateTo = (target: THREE.Vector3, to: THREE.Spherical) => {
+      cancel();
+      const fromTarget = c.target.clone();
+      const from = current();
+      const dTheta = Math.atan2(Math.sin(to.theta - from.theta), Math.cos(to.theta - from.theta));
+      const start = performance.now();
+      const step = (now: number) => {
+        const k = Math.min((now - start) / TWEEN_MS, 1);
+        const e = 1 - Math.pow(1 - k, 3);
+        c.target.lerpVectors(fromTarget, target, e);
+        const s = new THREE.Spherical(
+          THREE.MathUtils.lerp(from.radius, to.radius, e),
+          THREE.MathUtils.lerp(from.phi, to.phi, e),
+          from.theta + dTheta * e,
+        );
+        c.object.position.setFromSpherical(s).add(c.target);
+        c.update();
+        tween.current = k < 1 ? requestAnimationFrame(step) : null;
+      };
+      tween.current = requestAnimationFrame(step);
+    };
+    const toView = (v: CameraFocus) => {
+      const target = new THREE.Vector3(...v.target);
+      animateTo(target, new THREE.Spherical().setFromVector3(new THREE.Vector3(...v.position).sub(target)));
+    };
+    const zoom = (factor: number) => {
+      const s = current();
+      s.radius = THREE.MathUtils.clamp(s.radius * factor, MIN_DISTANCE, MAX_DISTANCE);
+      animateTo(c.target.clone(), s);
+    };
+
+    c.addEventListener("start", cancel);
+    onApi({
+      zoomIn: () => zoom(1 / ZOOM_STEP),
+      zoomOut: () => zoom(ZOOM_STEP),
+      rotate: (d) => {
+        const s = current();
+        s.theta += d * (Math.PI / 4);
+        animateTo(c.target.clone(), s);
+      },
+      reset: () => toView(DEFAULT_VIEW),
+      focus: (id) => toView(id ? REGION_VIEWS[id] : DEFAULT_VIEW),
+    });
+    return () => {
+      c.removeEventListener("start", cancel);
+      cancel();
+    };
+  }, [controls, onApi]);
+
+  useEffect(() => {
+    if (!controls) return;
+    controls.autoRotate = autoRotate;
+    controls.autoRotateSpeed = 1.2;
+  }, [controls, autoRotate]);
+
+  const highlightedKeys = useMemo(
+    () => (selectedStructure ? [selectedStructure] : selected ? [...structuresInRegion(selected)] : []),
+    [selected, selectedStructure],
+  );
+
+  const handleStructureClick = useCallback(
+    (key: string) => {
+      structureClicked.current = true;
+      const region = regionForStructure(key);
+      if (region) onSelect(region, key);
+    },
+    [onSelect],
+  );
+
+  const ready = controls !== null && !active && progress === 100;
 
   return (
-    <div className="absolute inset-0" data-scene-ready={ready ? "true" : undefined}>
-      <Canvas
-        shadows
-        dpr={[1, 2]}
-        camera={{ fov: 35, position: DEFAULT_VIEW.position, near: 0.1, far: 50 }}
-        onPointerMissed={() => onSelect(null)}
-        aria-label="Interactive 3D human body model"
-      >
-        <ambientLight intensity={0.55} />
-        <directionalLight position={[2.5, 4, 3]} intensity={1.6} castShadow shadow-mapSize={[1024, 1024]} />
-        <directionalLight position={[-3, 2, -2]} intensity={0.5} color="#cfeee4" />
-        <Environment resolution={128}>
-          <Lightformer intensity={1.6} position={[0, 5, 0]} scale={[10, 10, 1]} rotation-x={Math.PI / 2} />
-          <Lightformer intensity={0.9} color="#bfe9dc" position={[-5, 1, -1]} rotation-y={Math.PI / 2} scale={[20, 2, 1]} />
-          <Lightformer intensity={0.7} color="#ffd9cc" position={[5, 1, 1]} rotation-y={-Math.PI / 2} scale={[20, 2, 1]} />
-        </Environment>
-        <ActiveBodyModel selected={selected} hovered={hovered} onSelect={(id) => onSelect(id)} onHover={setHovered} />
-        <ContactShadows position={[0, -0.9, 0]} opacity={0.35} scale={3} blur={2.4} far={1.2} color="#2b5a57" />
-        <mesh position={[0, -0.905, 0]} rotation-x={-Math.PI / 2}>
-          <ringGeometry args={[0.45, 0.47, 64]} />
-          <meshBasicMaterial color="#4f9a94" transparent opacity={0.35} />
-        </mesh>
-        <Rig autoRotate={autoRotate} onApi={onApi} onFirstFrame={() => setReady(true)} />
-      </Canvas>
+    <div
+      ref={wrapRef}
+      className="absolute inset-0"
+      data-scene-ready={ready ? "true" : undefined}
+      aria-label="Interactive 3D anatomical body model"
+      onPointerDown={(e) => {
+        pointerDown.current = { x: e.clientX, y: e.clientY };
+      }}
+      onClick={(e) => {
+        // A click on empty space (not a structure, not a drag) clears the selection.
+        const hitStructure = structureClicked.current;
+        structureClicked.current = false;
+        if (hitStructure || !(e.target instanceof HTMLCanvasElement)) return;
+        const p = pointerDown.current;
+        if (p && Math.hypot(e.clientX - p.x, e.clientY - p.y) > CLICK_SLOP_PX) return;
+        onSelect(null, null);
+      }}
+    >
+      <AnatomyViewer
+        className="astra-anatomy"
+        defaultSex={MODEL_SEX}
+        highlightedKeys={highlightedKeys}
+        onStructureClick={handleStructureClick}
+        hoverHint="Click to see linked readings"
+        hoverColor={HOVER_COLOR}
+        highlightColor={HIGHLIGHT_COLOR}
+        showSexToggle={false}
+        showLayerToggles={false}
+        showRotateControl={false}
+        showZoomControls={false}
+      />
     </div>
   );
+}
+
+class ModelErrorBoundary extends Component<{ children: ReactNode; onRetry: () => void }, { failed: boolean }> {
+  override state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  override componentDidCatch(error: unknown) {
+    console.error("3D anatomy model failed to load", error);
+  }
+
+  override render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div role="alert" className="absolute inset-0 grid place-items-center p-6">
+        <div className="max-w-xs rounded-lg border bg-card p-5 text-center shadow-raised">
+          <span className="mx-auto grid size-10 place-items-center rounded-full bg-coral-soft text-coral-ink">
+            <AlertTriangle className="size-5" aria-hidden />
+          </span>
+          <h3 className="mt-3 text-sm font-semibold">The 3D model couldn't load</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Check your connection and try again. The region buttons and readings below still work.
+          </p>
+          <Button size="sm" className="mt-4" onClick={this.props.onRetry}>
+            Try again
+          </Button>
+        </div>
+      </div>
+    );
+  }
 }

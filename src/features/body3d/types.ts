@@ -1,17 +1,5 @@
 import type { BodyRegionId } from "@/types/domain";
 
-/**
- * Contract every body model must satisfy. To replace the procedural figure
- * with a GLB, build a component with these props whose meshes are grouped by
- * region, then point `active-model.ts` at it.
- */
-export interface BodyModelProps {
-  selected: BodyRegionId | null;
-  hovered: BodyRegionId | null;
-  onSelect: (id: BodyRegionId) => void;
-  onHover: (id: BodyRegionId | null) => void;
-}
-
 export type Vec3 = [number, number, number];
 
 export interface CameraFocus {
