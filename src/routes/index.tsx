@@ -1,23 +1,18 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
-// The home route ships no og:image, so serve-time hosting can inject the
-// project's social preview (explicit og:image or latest screenshot).
+import { authService } from "@/features/auth/auth-service";
+
 export const Route = createFileRoute("/")({
-  component: Index,
+  ssr: false,
+  head: () => ({
+    meta: [
+      { title: "ASTRA CARE — Astronaut Health Monitoring" },
+      { name: "description", content: "Sign in with your astronaut access code to see your personal health and mission data." },
+      { property: "og:title", content: "ASTRA CARE — Astronaut Health Monitoring" },
+      { property: "og:description", content: "Personal astronaut health and space-environment monitoring prototype." },
+    ],
+  }),
+  beforeLoad: () => {
+    throw redirect({ to: authService.getSession() ? "/overview" : "/login", replace: true });
+  },
 });
-
-// IMPORTANT: Replace this placeholder. See ./README.md for routing conventions.
-function Index() {
-  return (
-    <div
-      className="flex min-h-screen items-center justify-center"
-      style={{ backgroundColor: "#fcfbf8" }}
-    >
-      <img
-        data-lovable-blank-page-placeholder="REMOVE_THIS"
-        src="https://cdn.gpteng.co/blank-app-v1.svg"
-        alt="Your app will live here!"
-      />
-    </div>
-  );
-}
