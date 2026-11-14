@@ -28,3 +28,13 @@ use the editor.
   own key and store it in Secrets.
 - **Secrets.** Lovable manages them. Do not put secret values in the repo.
 <!-- LOVABLE:END -->
+
+## Architecture (ASTRA CARE)
+
+- Data access goes only through `src/services/api.ts` (`ApiClient` interfaces in `src/services/types.ts`); swap the mock there for a real backend. Why: one integration point for backend, sensors and the AI model.
+- Every service method takes the session token and resolves the astronaut from it; never accept an astronaut ID from the UI. Why: mirrors required server-side access control and keeps profiles isolated.
+- React Query keys always include `astronautId` (see `src/services/queries.ts`); sign-out cancels and clears the cache. Why: caches must never mix astronauts.
+- Demo auth lives in `src/features/auth/` and is browser-only, so `/login`, `/` and the `_authenticated` layout are `ssr: false`. Why: sessionStorage is unavailable during SSR.
+- Mock data is generated lazily and deterministically from seeds against a fixed simulated clock (`src/data/mock/`); never generate at module scope or with `Math.random`. Why: stable demos and Worker-safe module init.
+- The 3D body is swapped via `src/features/body3d/active-model.ts`; any replacement must implement `BodyModelProps`. Why: replace the model without touching pages.
+- Recharts axes/grid must be direct children or arrays, never wrapped in a fragment. Why: Recharts ignores fragment children.
